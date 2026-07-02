@@ -32,7 +32,7 @@ export async function getCurrentWorkspace(): Promise<CurrentWorkspace> {
     .eq("is_active", true)
     .order("created_at", { ascending: true })
     .limit(1)
-    .single();
+    .maybeSingle();
 
   if (error || !data) redirect("/onboarding");
 

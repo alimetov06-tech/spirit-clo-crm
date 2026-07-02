@@ -15,6 +15,16 @@ import { demoAppointments, demoGeneralExpenses, demoOrders } from "@/lib/demo/da
 import { PeriodFilter } from "@/components/period-filter";
 import { inPeriod, resolvePeriod, type PeriodParams } from "@/lib/periods";
 
+function asArray<T>(value: T[] | T | null | undefined): T[] {
+  if (!value) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
+function toMoney(value: number | string | null | undefined) {
+  const numeric = Number(value ?? 0);
+  return Number.isFinite(numeric) ? numeric : 0;
+}
+
 export default async function DashboardPage({ searchParams }: { searchParams: Promise<PeriodParams> }) {
   const params = await searchParams;
   const period = resolvePeriod(params);
@@ -56,14 +66,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const generalExpenses = generalExpensesData ?? [];
 
   const normalizedOrders = orders.map((order) => {
-    const items = (order.order_items ?? []).map((item: { quantity: number; unit_price: number }) => ({
-      quantity: Number(item.quantity),
-      unitPrice: Number(item.unit_price)
+    const items = asArray(order.order_items).map((item: { quantity?: number | string | null; unit_price?: number | string | null }) => ({
+      quantity: toMoney(item.quantity),
+      unitPrice: toMoney(item.unit_price)
     }));
-    const total = finalOrderTotal(items, Number(order.discount_amount ?? 0));
+    const total = finalOrderTotal(items, toMoney(order.discount_amount));
     const paid = paidTotal(
-      (order.payments ?? []).map((payment: { amount: number; payment_type: string; voided_at: string | null }) => ({
-        amount: Number(payment.amount),
+      asArray(order.payments).map((payment: { amount?: number | string | null; payment_type?: string | null; voided_at?: string | null }) => ({
+        amount: toMoney(payment.amount),
         type: payment.payment_type as "prepayment",
         voided: Boolean(payment.voided_at)
       }))
@@ -76,7 +86,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const overdueOrders = activeOrders.filter((order) => order.due_date && isBefore(parseISO(order.due_date), new Date()));
   const paidThisPeriod = paidTotal(
     payments.filter((payment) => inPeriod(payment.payment_date, period)).map((payment) => ({
-      amount: Number(payment.amount),
+      amount: toMoney(payment.amount),
       type: payment.payment_type as "prepayment",
       voided: Boolean(payment.voided_at)
     }))
@@ -84,8 +94,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const deliveredRevenue = normalizedOrders
     .filter((order) => order.status === "delivered" && inPeriod(order.delivered_at, period))
     .reduce((sum, order) => sum + order.total, 0);
-  const directCosts = directCostTotal(orderExpenses.filter((expense: any) => inPeriod(expense.expense_date, period)).map((expense) => ({ amount: Number(expense.amount), deleted: Boolean(expense.deleted_at) })));
-  const generalCost = directCostTotal(generalExpenses.filter((expense: any) => inPeriod(expense.expense_date, period)).map((expense: any) => ({ amount: Number(expense.amount), deleted: Boolean(expense.deleted_at) })));
+  const directCosts = directCostTotal(orderExpenses.filter((expense: any) => inPeriod(expense.expense_date, period)).map((expense) => ({ amount: toMoney(expense.amount), deleted: Boolean(expense.deleted_at) })));
+  const generalCost = directCostTotal(generalExpenses.filter((expense: any) => inPeriod(expense.expense_date, period)).map((expense: any) => ({ amount: toMoney(expense.amount), deleted: Boolean(expense.deleted_at) })));
   const debt = normalizedOrders
     .filter((order) => order.status !== "cancelled")
     .reduce((sum, order) => sum + Math.max(0, order.total - order.paid), 0);
