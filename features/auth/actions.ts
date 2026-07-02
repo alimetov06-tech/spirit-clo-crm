@@ -54,6 +54,50 @@ function getDatabaseErrorMessage(message: string) {
   return message || "Не удалось сохранить данные в базе";
 }
 
+async function createOwnedWorkspace(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  user: { id: string; email?: string | null },
+  fullName: string,
+  organizationName: string
+): Promise<{ ok: true; organizationId: string } | { ok: false; message: string }> {
+  const organizationId = randomUUID();
+  const organizationSlug = `spirit-clo-${organizationId.slice(0, 8)}`;
+
+  const { error: organizationError } = await supabase
+    .from("organizations")
+    .insert({
+      id: organizationId,
+      name: organizationName,
+      slug: organizationSlug,
+      currency: "RUB",
+      timezone: "Europe/Moscow"
+    });
+
+  if (organizationError) return { ok: false, message: organizationError.message };
+
+  const { error: profileError } = await supabase.from("profiles").upsert({
+    id: user.id,
+    email: user.email,
+    full_name: fullName
+  });
+
+  if (profileError) return { ok: false, message: profileError.message };
+
+  const { error: memberError } = await supabase.from("organization_members").insert({
+    organization_id: organizationId,
+    user_id: user.id,
+    role: "owner",
+    is_active: true
+  });
+
+  if (memberError) return { ok: false, message: memberError.message };
+
+  const { error: seedError } = await supabase.rpc("seed_organization_defaults", { target_organization_id: organizationId });
+  if (seedError) return { ok: false, message: seedError.message };
+
+  return { ok: true, organizationId };
+}
+
 export async function signInAction(formData: FormData) {
   const parsed = authSchema.safeParse({
     email: getString(formData, "email"),
@@ -92,7 +136,18 @@ export async function signInAction(formData: FormData) {
   }
 
   revalidatePath("/", "layout");
-  if (!workspace) redirect("/onboarding");
+  if (!workspace) {
+    const createdWorkspace = await createOwnedWorkspace(
+      supabase,
+      user,
+      user.email ?? "Собственник",
+      "SPIRIT.CLO"
+    );
+
+    if (!createdWorkspace.ok) {
+      redirect(`/onboarding?error=${encodeURIComponent(getDatabaseErrorMessage(createdWorkspace.message))}`);
+    }
+  }
   redirect("/dashboard");
 }
 
@@ -164,42 +219,11 @@ export async function createWorkspaceAction(formData: FormData) {
 
   const fullName = getString(formData, "full_name") || user.email || "Собственник";
   const organizationName = getString(formData, "organization_name") || "SPIRIT.CLO";
-  const organizationId = randomUUID();
-  const organizationSlug = `spirit-clo-${organizationId.slice(0, 8)}`;
+  const createdWorkspace = await createOwnedWorkspace(supabase, user, fullName, organizationName);
 
-  const { error: organizationError } = await supabase
-    .from("organizations")
-    .insert({
-      id: organizationId,
-      name: organizationName,
-      slug: organizationSlug,
-      currency: "RUB",
-      timezone: "Europe/Moscow"
-    });
-
-  if (organizationError) {
-    redirect(`/onboarding?error=${encodeURIComponent(getDatabaseErrorMessage(organizationError.message))}`);
+  if (!createdWorkspace.ok) {
+    redirect(`/onboarding?error=${encodeURIComponent(getDatabaseErrorMessage(createdWorkspace.message))}`);
   }
-
-  const { error: profileError } = await supabase.from("profiles").upsert({
-    id: user.id,
-    email: user.email,
-    full_name: fullName
-  });
-
-  if (profileError) redirect(`/onboarding?error=${encodeURIComponent(getDatabaseErrorMessage(profileError.message))}`);
-
-  const { error: memberError } = await supabase.from("organization_members").insert({
-    organization_id: organizationId,
-    user_id: user.id,
-    role: "owner",
-    is_active: true
-  });
-
-  if (memberError) redirect(`/onboarding?error=${encodeURIComponent(getDatabaseErrorMessage(memberError.message))}`);
-
-  const { error: seedError } = await supabase.rpc("seed_organization_defaults", { target_organization_id: organizationId });
-  if (seedError) redirect(`/onboarding?error=${encodeURIComponent(getDatabaseErrorMessage(seedError.message))}`);
 
   redirect("/dashboard");
 }
