@@ -67,7 +67,32 @@ export async function signInAction(formData: FormData) {
 
   if (error) redirect(`/login?error=${encodeURIComponent(getAuthErrorMessage(error.message))}`);
 
+  const {
+    data: { user },
+    error: userError
+  } = await supabase.auth.getUser();
+
+  if (userError || !user) redirect(`/login?error=${encodeURIComponent("Не удалось открыть сессию после входа")}`);
+
+  await supabase.from("profiles").upsert({
+    id: user.id,
+    email: user.email
+  });
+
+  const { data: workspace, error: workspaceError } = await supabase
+    .from("organization_members")
+    .select("organization_id")
+    .eq("user_id", user.id)
+    .eq("is_active", true)
+    .limit(1)
+    .maybeSingle();
+
+  if (workspaceError) {
+    redirect(`/onboarding?error=${encodeURIComponent("Вход выполнен, но рабочее пространство не загрузилось. Создайте его ещё раз.")}`);
+  }
+
   revalidatePath("/", "layout");
+  if (!workspace) redirect("/onboarding");
   redirect("/dashboard");
 }
 
