@@ -25,25 +25,38 @@ export async function getCurrentWorkspace(): Promise<CurrentWorkspace> {
 
   if (userError || !user) redirect("/login");
 
-  const { data, error } = await supabase
+  const { data: member, error: memberError } = await supabase
     .from("organization_members")
-    .select("organization_id, role, organizations(name)")
+    .select("organization_id, role")
     .eq("user_id", user.id)
     .eq("is_active", true)
     .order("created_at", { ascending: true })
     .limit(1)
     .maybeSingle();
 
-  if (error || !data) redirect("/onboarding");
+  if (memberError) {
+    console.error("Workspace member lookup failed", memberError);
+    redirect(`/onboarding?error=${encodeURIComponent("Не удалось загрузить рабочее пространство")}`);
+  }
 
-  const organization = Array.isArray(data.organizations) ? data.organizations[0] : data.organizations;
+  if (!member) redirect("/onboarding");
+
+  const { data: organization, error: organizationError } = await supabase
+    .from("organizations")
+    .select("name")
+    .eq("id", member.organization_id)
+    .maybeSingle();
+
+  if (organizationError) {
+    console.error("Workspace organization lookup failed", organizationError);
+  }
 
   return {
     userId: user.id,
     email: user.email ?? null,
-    organizationId: data.organization_id,
+    organizationId: member.organization_id,
     organizationName: organization?.name ?? "SPIRIT.CLO",
-    role: data.role as CurrentWorkspace["role"]
+    role: member.role as CurrentWorkspace["role"]
   };
 }
 
@@ -67,22 +80,27 @@ export async function getMaybeWorkspace() {
 
   if (!user) return null;
 
-  const { data } = await supabase
+  const { data: member, error: memberError } = await supabase
     .from("organization_members")
-    .select("organization_id, role, organizations(name)")
+    .select("organization_id, role")
     .eq("user_id", user.id)
     .eq("is_active", true)
     .limit(1)
     .maybeSingle();
 
-  if (!data) return null;
-  const organization = Array.isArray(data.organizations) ? data.organizations[0] : data.organizations;
+  if (memberError || !member) return null;
+
+  const { data: organization } = await supabase
+    .from("organizations")
+    .select("name")
+    .eq("id", member.organization_id)
+    .maybeSingle();
 
   return {
     userId: user.id,
     email: user.email ?? null,
-    organizationId: data.organization_id,
+    organizationId: member.organization_id,
     organizationName: organization?.name ?? "SPIRIT.CLO",
-    role: data.role as CurrentWorkspace["role"]
+    role: member.role as CurrentWorkspace["role"]
   };
 }
